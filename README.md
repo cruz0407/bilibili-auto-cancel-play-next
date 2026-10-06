@@ -1,48 +1,77 @@
 # B站自动取消连播
 
-一个 Tampermonkey / 油猴脚本：当 B 站播放器结束页出现“取消连播”时，自动点击它，避免视频自动播放下一个推荐视频。
+一个 Tampermonkey（油猴）脚本：**合集不自动切下一条，多 P 视频自动播到最后一 P，普通推荐连播自动取消。**
 
-## 功能
+## 播放规则
 
-- 自动识别 B 站播放器结束页的“取消连播”按钮
-- 支持按钮动态出现、B 站单页切换视频
-- 使用 `MutationObserver` 监听播放器变化
-- 低频轮询作为兜底，避免漏掉 B 站只修改状态但没有明显 DOM 变化的情况
-- 不会修改播放器设置，也不会请求额外权限
+| 页面类型 | 行为 |
+| --- | --- |
+| 多个独立视频组成的合集（当前视频只有 1 P） | 将播放方式设为“播完暂停”，不自动跳到合集下一条 |
+| 同一个视频的多 P，中间 P | 将播放方式设为“自动切集”，继续播放下一 P |
+| 同一个视频的多 P，最后一 P | 将播放方式设为“播完暂停”，并取消推荐连播 |
+| 普通单 P 视频 | 保留播放器设置；出现“取消连播”按钮时自动点击 |
 
-## 油猴订阅
+识别依赖实际视频数据，而不是标题里有没有“合集”或“P”。**如果合集中的某条视频本身也有多个 P，则允许它内部的 P 连播，在最后一 P 停止，不跨到下一个视频。**
 
-安装 Tampermonkey 后，打开下面的地址即可安装或订阅：
+## 安装 / 订阅
+
+先安装 [Tampermonkey](https://www.tampermonkey.net/)，然后打开：
+
+**[点击安装或更新脚本](https://raw.githubusercontent.com/cruz0407/bilibili-auto-cancel-play-next/main/bilibili-auto-cancel-play-next.user.js)**
 
 ```text
 https://raw.githubusercontent.com/cruz0407/bilibili-auto-cancel-play-next/main/bilibili-auto-cancel-play-next.user.js
 ```
 
-脚本内置了 `@updateURL` 和 `@downloadURL`，之后 Tampermonkey 可以从 GitHub Raw 地址检查更新。
+脚本内置 `@updateURL` / `@downloadURL`，Tampermonkey 可按自身更新设置检查新版本。更新后请确认版本为 **1.1.0**，关闭重复的旧脚本，并刷新已经打开的 B 站页面。
 
-## 手动安装
+也可复制 [`bilibili-auto-cancel-play-next.user.js`](./bilibili-auto-cancel-play-next.user.js) 全部内容，在 Tampermonkey 中新建脚本并保存。
 
-1. 安装 [Tampermonkey](https://www.tampermonkey.net/)。
-2. 打开 [`bilibili-auto-cancel-play-next.user.js`](./bilibili-auto-cancel-play-next.user.js)。
-3. 复制全部内容，在 Tampermonkey 中新建脚本并粘贴保存。
+## 实现方式
 
-## 原理
+- 优先读取与当前 BV 一致的页面初始视频数据。
+- 单页切换视频时，若页面初始数据已过期，则向 B 站自身的公开视频信息接口查询当前 BV 的分 P 数量和合集信息。
+- 使用播放器已有的播放方式单选框：`0` 为“自动切集”，`2` 为“播完暂停”。通过实际点击触发播放器处理，不是单纯修改样式。
+- 自动识别并点击 `.bpx-player-ending-related-item-cancel[data-i18n="cancelAutoPlayNext"]`。
+- 监听 DOM 变化并合并检查，另以 500 ms 的低频检查兼容单页切换和没有 DOM 变更的情况。
+- 数据未知时，不猜测视频类别、不改播放方式、不提前点击取消按钮；会稍后重试。
 
-脚本监听以下按钮：
+## 注意事项
 
-```css
-.bpx-player-ending-related-item-cancel[data-i18n="cancelAutoPlayNext"]
+- 仅匹配 `https://www.bilibili.com/*` 和 `https://bilibili.com/*` 的桌面网页播放器。
+- **会修改播放器的“播放方式”设置**，B 站可能记住该设置。合集切换到多 P 时，脚本会重新启用自动切集；停用脚本后若要恢复原始行为，可手动调整“设置 → 更多播放设置 → 播放方式”。
+- 不修改“自动开播”、单集循环、倍速、音量，也不拦截你手动点击下一集或选集。若自行开启单集循环，该设置仍保留。
+- 脚本没有额外油猴权限；API 查询不携带登录 Cookie，不上传观看信息到第三方。
+- 页面初始数据和 B 站 API 均不可用时，无法可靠区分分 P，脚本会保留原状，不保证阻止自动切换。
+- B 站更改页面结构后可能需要更新。
+
+## 验证
+
+```sh
+npm ci
+npm test
+node --check bilibili-auto-cancel-play-next.user.js
 ```
 
-只有当按钮可见且文字为“取消连播”时才会执行点击。
+17 项 DOM 回归测试覆盖合集、多 P 中间/最后一 P、合集包含多 P、单页切换、异步数据、按钮复用和隐藏状态。测试使用模拟播放器 DOM 与元数据，不能替代真实 B 站播放结束测试。
 
-## 免责声明
-
-这是一个个人用户脚本，仅用于改善本地浏览体验。B 站页面结构发生变化时，脚本可能需要更新。
+可手动检查：单 P 合集播完不跨视频；多 P 从中间 P 正常进入下一 P、最后一 P 停止；普通视频推荐倒计时被取消。
 
 ## 更新记录
+
+### 1.1.0
+
+- 区分合集、分 P 与普通推荐连播。
+- 合集设为播完暂停，多 P 自动播放至最后一 P。
+- 修复从合集切到分 P 时沿用暂停设置的问题。
+- 增加单页切换和异步视频信息查询支持。
+- 添加可复现的自动化回归测试。
 
 ### 1.0.1
 
 - 修复按钮 DOM 被复用后，只能取消第一次连播的问题。
 - 检查按钮的父级是否隐藏，避免在结束面板未显示时提前点击。
+
+## 免责声明
+
+个人用户脚本，仅用于改善本地浏览体验，与哔哩哔哩官方无关。
