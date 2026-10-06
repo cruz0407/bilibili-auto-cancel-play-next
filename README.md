@@ -39,3 +39,10 @@ https://raw.githubusercontent.com/cruz0407/bilibili-auto-cancel-play-next/main/b
 ## 免责声明
 
 这是一个个人用户脚本，仅用于改善本地浏览体验。B 站页面结构发生变化时，脚本可能需要更新。
+
+## 更新记录
+
+### 1.0.1
+
+- 修复按钮 DOM 被复用后，只能取消第一次连播的问题。
+- 检查按钮的父级是否隐藏，避免在结束面板未显示时提前点击。
