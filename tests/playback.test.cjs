@@ -42,3 +42,65 @@ test('initially hidden button remains unclicked',()=>using({},async s=>{await ti
 test('ordinary recommendation is still cancelled without changing playback settings',()=>using({},async s=>{s.button.style.display='';await tick();assert.equal(s.clicks,1);assert.equal(s.modeChanges,0);}));
 
 test('unknown video metadata never consumes a possibly valid multipart countdown',()=>using({data:null},async s=>{s.button.style.display='';await tick();assert.equal(s.clicks,0);}));
+function profileWindow(s){
+ const w=s.dom.window;const counts={documentQueries:0,styleReads:0};
+ for(const name of ['querySelector','querySelectorAll']){
+  const original=w.Document.prototype[name];
+  w.Document.prototype[name]=function(...args){counts.documentQueries++;return original.apply(this,args);};
+ }
+ const original=w.getComputedStyle.bind(w);
+ w.getComputedStyle=(...args)=>{counts.styleReads++;return original(...args);};
+ return counts;
+}
+test('comment, danmaku and countdown style churn does not rescan the whole document',()=>using({},async s=>{
+ const w=s.dom.window,player=w.document.querySelector('.bpx-player-container');
+ player.insertAdjacentHTML('beforeend','<div class="bpx-player-render-dm-wrap"><span id="dm-noise"></span></div><div class="bpx-player-ending-related-item-countdown"><svg><path id="animation-noise"></path></svg></div>');
+ w.document.body.insertAdjacentHTML('beforeend','<div id="comments-noise"></div>');
+ const nodes=['dm-noise','animation-noise','comments-noise'].map(id=>w.document.getElementById(id));
+ await tick();const counts=profileWindow(s);
+ for(let i=0;i<15;i++){for(const node of nodes)node.style.opacity=i%2?'0.8':'1';await new Promise(r=>setTimeout(r,15));}
+ await tick();assert.ok(counts.documentQueries<=2,`full-page queries: ${counts.documentQueries}`);
+ assert.equal(s.clicks,0);
+}));
+test('inline-hidden cancel button requires no computed-style traversal',()=>using({},async s=>{
+ await tick();const counts=profileWindow(s);s.button.classList.add('style-update');await tick();
+ assert.equal(counts.styleReads,0);assert.equal(s.clicks,0);
+}));
+test('new player and its visible cancel button replace cached detached controls',()=>using({data:metadata(collection,1,true)},async s=>{
+ await tick();const w=s.dom.window,old=w.document.querySelector('.bpx-player-container');
+ const replacement=old.cloneNode(true);replacement.querySelector('[value="0"]').checked=true;
+ const button=replacement.querySelector('[data-i18n]');button.style.display='';let cancelled=0;
+ button.addEventListener('click',()=>{cancelled++;button.style.display='none';});old.replaceWith(replacement);
+ await tick();assert.equal(replacement.querySelector('[value="2"]').checked,true);assert.equal(cancelled,1);
+}));
+test('player inserted after a period with no player is discovered',()=>using({data:metadata(collection,1,true)},async s=>{
+ const w=s.dom.window,player=w.document.querySelector('.bpx-player-container');player.remove();await tick();
+ player.querySelector('[value="0"]').checked=true;w.document.body.append(player);await tick();assert.equal(s.mode,'2');
+}));
+test('a hidden ancestor outside the player still blocks cancellation until visible',()=>using({},async s=>{
+ await tick();const w=s.dom.window,player=w.document.querySelector('.bpx-player-container');const wrapper=w.document.createElement('div');
+ wrapper.style.display='none';player.before(wrapper);wrapper.append(player);s.button.style.display='';await tick();assert.equal(s.clicks,0);
+ wrapper.style.display='';await tick();assert.equal(s.clicks,1);
+}));
+test('CSS class-hidden buttons remain protected without an inline display style',()=>using({},async s=>{
+ const w=s.dom.window;const style=w.document.createElement('style');style.textContent='.cancel-hidden{display:none}';w.document.head.append(style);
+ s.button.classList.add('cancel-hidden');s.button.style.display='';await tick();assert.equal(s.clicks,0);
+ s.button.classList.remove('cancel-hidden');await tick();assert.equal(s.clicks,1);
+}));
+test('lightweight fallback still repairs silent radio checked property changes',()=>using({data:metadata(collection,1,true)},async s=>{
+ await tick();s.dom.window.document.querySelector('[value="0"]').checked=true;
+ await new Promise(r=>setTimeout(r,600));assert.equal(s.mode,'2');
+}));
+test('video metadata cache is bounded during long SPA sessions',()=>using({},async s=>{
+ const w=s.dom.window;
+ for(let i=0;i<33;i++){
+  const bvid=`BVcache${i}`;w.__INITIAL_STATE__.videoData=metadata(bvid);
+  w.history.pushState({},'',`/video/${bvid}/`);
+  w.document.body.classList.toggle('navigation');
+  await new Promise(r=>setTimeout(r,45));
+ }
+ let fetched=0;w.__INITIAL_STATE__.videoData=null;
+ w.fetch=async()=>{fetched++;return {ok:true,json:async()=>({code:0,data:metadata(single)})};};
+ w.history.pushState({},'',`/video/${single}/`);w.document.body.classList.toggle('navigation');await tick();
+ assert.equal(fetched,1);
+}));
